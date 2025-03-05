@@ -1,0 +1,136 @@
+# Paxos
+# Based on [Paxos Made Simple](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
+NUM_PROPOSERS = 3
+NUM_ACCEPTORS = 3
+NUM_LEARNERS = 3
+
+# Only a value that has been proposed may be chosen
+always assertion OnlyProposedValueMayBeChosen:
+    c = chosen()
+    if c:
+        return c in proposed_values
+    else:
+        return True
+
+# Only a single value is chosen
+always assertion SingleValueChosen:
+    if chosen():
+        return len(chosens) == 1
+    else:
+        Return True
+
+# A process never learns that a value has been chosen unless it actually has been
+always assertion LearnedValueChosen:
+    for l in learners:
+        if l.value != None and l.value not in chosens:
+            return False
+    return True
+
+def chosen():
+    "The chosen value is the one that has been accepted by a majority of acceptors"
+    vals = {}
+    for a in acceptors:
+        if a.accepted_proposal:
+            v = a.accepted_proposal.v
+            vals.setdefault(v, 0)
+            vals[v] += 1
+    if len(vals)>0:
+        val = max(vals, key=vals.get)
+        if vals[val] > NUM_ACCEPTORS // 2:
+            return val
+    return None
+
+
+def record_proposed_value(v):
+    """Record the proposed value in the set of proposed values
+
+    This is only needed so tha twe can check the OnlyProposedValueMayBeChosen invariant
+    """
+    proposed_values.add(v)
+
+def record_chosen_value():
+    """If there is a chosen value, record it in the set of chosen values
+
+    This is only needed so that we can check the SingleValueChosen invariant
+    """
+    c = chosen()
+    if c != None:
+        chosens.add(c)
+
+
+role Proposer:
+    action Init:
+        self.n = (any range(NUM_PROPOSERS), self.__id__)
+        self.num_responses = 0
+        self.acc = set()
+        self.proposal = None
+
+    # Prepare the acceptors
+    action Prepare:
+        for a in acceptors:
+            m = a.Prepare(self, self.n)
+
+    # receive a promise from the acceptors
+    func Promise(n, aid, proposal):
+        if n == self.n:
+            self.acc.add(aid)
+        if proposal != None and (self.proposal == None or self.proposal.n < proposal.n):
+            self.proposal = proposal
+
+    # Issue the proposal
+    action Issue:
+        require len(self.acc) > NUM_ACCEPTORS // 2
+        if self.proposal = None:
+            self.proposal = record(n=self.n, v=self.__id__)
+
+        record_proposed_value(self.proposal.v)
+        for a in acceptors:
+            m = a.Issue(self.proposal)
+
+role Acceptor:
+    action Init:
+        self.accepted_proposal = None
+        self.max_n = -1  # largest n seen in a Prepare request
+
+    func Prepare(p, n):
+        if self.accepted_proposal == None or self.accepted_proposal.n < n:
+            if n > self.max_n:
+                self.max_n = n
+            p.Promise(self.__id__, self.accepted_proposal)
+
+    func Issue(proposal):
+        if proposal.n > self.max_n:
+            atomic:
+                self.accepted_proposal = proposal
+                # Keep track of the values that have been chosen
+                record_chosen_value()
+                for l in learners:
+                    l.Announce(proposal)
+
+
+role Learner:
+    action Init:
+        self.value = None
+        self.proposals = {}
+
+    func Announce(proposal):
+        self.proposals.setdefault(proposal, 0)
+        self.proposals[proposal] += 1
+        if self.proposals[proposal] > NUM_ACCEPTORS // 2:
+            self.value = proposal.v
+
+
+action Init:
+    proposed_values = set()
+    chosens = set()
+
+    proposers = []
+    acceptors = []
+    learners = []
+    for i in range(NUM_PROPOSERS):
+        proposers.append(Proposer())
+    for i in range(NUM_ACCEPTORS):
+        acceptors.append(Acceptor())
+    for i in range(NUM_LEARNERS):
+        learners.append(Learner())
+
