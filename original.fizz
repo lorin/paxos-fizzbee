@@ -1,24 +1,8 @@
 # Paxos
 # Based on [Paxos Made Simple](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
-NUM_PROPOSERS = 1
+NUM_PROPOSERS = 3
 NUM_ACCEPTORS = 3
-NUM_LEARNERS = 1
-
-# This should be violated!
-always assertion ProposalNeverGetsAccepted:
-    for a in acceptors:
-        if a.accepted_proposal:
-            return False
-    return True
-
-# Value never gets learned
-# We hope this fails!
-always assertion ValueNeverGetsLearned:
-    for l in learners:
-        if l.value:
-            return False
-    return True
-
+NUM_LEARNERS = 3
 
 # Only a value that has been proposed may be chosen
 always assertion OnlyProposedValueMayBeChosen:
@@ -76,7 +60,8 @@ def record_chosen_value(acceptors, chosens):
 
 role Proposer:
     action Init:
-        self.n = self.BALLOT
+        num = any range(NUM_PROPOSERS)
+        self.n = (num, self.__id__)
         self.num_responses = 0
         self.acc = set()
         self.proposal = None
@@ -106,13 +91,13 @@ role Proposer:
 role Acceptor:
     action Init:
         self.accepted_proposal = None
-        self.max_n = -1  # largest n seen in a Prepare request
+        self.max_n = (-1, -1)  # largest n seen in a Prepare request
 
     func Prepare(p, n):
         if self.accepted_proposal == None or self.accepted_proposal.n < n:
             if n > self.max_n:
                 self.max_n = n
-            p.Promise(n, self.__id__, self.accepted_proposal)
+            p.Promise(self.__id__, self.accepted_proposal)
 
     func Issue(proposal):
         if proposal.n > self.max_n:
@@ -126,8 +111,8 @@ role Acceptor:
 role Learner:
     action Init:
         self.value = None
-        self.proposals = genericmap()
-        self.seen = genericset()
+        self.proposals = {}
+        self.seen = set()
 
     # receive an announcement from an acceptor
     func Announce(aid, proposal):
@@ -150,7 +135,7 @@ action Init:
     acceptors = []
     learners = []
     for i in range(NUM_PROPOSERS):
-        proposers.append(Proposer(BALLOT=i))
+        proposers.append(Proposer())
     for i in range(NUM_ACCEPTORS):
         acceptors.append(Acceptor())
     for i in range(NUM_LEARNERS):
