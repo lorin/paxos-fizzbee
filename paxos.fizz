@@ -1,19 +1,16 @@
 # Paxos
 # Based on [Paxos Made Simple](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
-NUM_PROPOSERS = 1
+NUM_PROPOSERS = 2
 NUM_ACCEPTORS = 3
 NUM_LEARNERS = 1
 
-always assertion ProposalNeverGetsChosen:
-    return not chosen(acceptors)
-
 # Value never gets learned
 # We hope this fails!
-#always assertion ValueNeverGetsLearned:
-#    for l in learners:
-#        if l.value:
-#            return False
-#    return True
+always assertion ValueNeverGetsLearned:
+    for l in learners:
+        if l.value:
+            return False
+    return True
 
 
 # Only a value that has been proposed may be chosen
@@ -53,37 +50,37 @@ def chosen(acceptors):
     return None
 
 
-
 role Proposer:
     action Init:
-        self.n = self.BALLOT
-        self.num_responses = 0
         self.acc = set()
         self.proposal = None
 
-    # Prepare the acceptors
     action Prepare:
+        "Prepare the acceptors for a proposal"
         for a in acceptors:
-            m = a.Prepare(self, self.n)
+            m = a.Prepare(self.__id__, self.n)
 
-    # receive a promise from the acceptors
     func Promise(n, aid, proposal):
+        "Receive a promise from the acceptors in response to the Prepare"
+
+        # keep track of how many acceptors have issued promises
         if n == self.n:
             self.acc.add(aid)
+
+        # If the acceptor returned a proposal with an n less than ours, set that as our proposal
         if proposal != None and (self.proposal == None or self.proposal.n < proposal.n):
             self.proposal = proposal
 
-    # Issue the proposal
+    # Issue the proposal to the acceptors
     action Issue:
         require len(self.acc) > NUM_ACCEPTORS // 2
         if self.proposal == None:
             self.proposal = record(n=self.n, v=self.__id__)
-
         self.record_proposed_value(self.proposal.v)
         for a in acceptors:
             m = a.Issue(self.proposal)
 
-    func record_proposed_value(v):
+    atomic func record_proposed_value(v):
         """Record the proposed value in the set of proposed values
 
         This is only needed so that we can check the OnlyProposedValueMayBeChosen invariant
@@ -95,11 +92,15 @@ role Acceptor:
         self.accepted_proposal = None
         self.max_n = -1  # largest n seen in a Prepare request
 
-    func Prepare(p, n):
+    func Prepare(pid, n):
         if self.accepted_proposal == None or self.accepted_proposal.n < n:
             if n > self.max_n:
                 self.max_n = n
+            p = self.get_proposer(pid)
             p.Promise(n, self.__id__, self.accepted_proposal)
+
+    atomic func get_proposer(pid):
+        return [p for p in proposers if p.__id__ == pid][0]
 
     func Issue(proposal):
         if proposal.n >= self.max_n:
@@ -110,7 +111,7 @@ role Acceptor:
                 for l in learners:
                     l.Announce(self.__id__, proposal)
 
-    func record_chosen_value():
+    atomic func record_chosen_value():
         """If there is a chosen value, record it in the set of chosen values
 
         This is only needed so that we can check the SingleValueChosen invariant
@@ -146,7 +147,7 @@ action Init:
     acceptors = []
     learners = []
     for i in range(NUM_PROPOSERS):
-        proposers.append(Proposer(BALLOT=i))
+        proposers.append(Proposer(n=i))
     for i in range(NUM_ACCEPTORS):
         acceptors.append(Acceptor())
     for i in range(NUM_LEARNERS):
