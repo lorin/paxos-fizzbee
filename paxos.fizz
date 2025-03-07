@@ -7,20 +7,13 @@ NUM_LEARNERS = 1
 always assertion ProposalNeverGetsChosen:
     return not chosen(acceptors)
 
-# This should be violated!
-#always assertion ProposalNeverGetsAccepted:
-#    for a in acceptors:
-#        if a.accepted_proposal:
-#            return False
-#    return True
-
 # Value never gets learned
 # We hope this fails!
-always assertion ValueNeverGetsLearned:
-    for l in learners:
-        if l.value:
-            return False
-    return True
+#always assertion ValueNeverGetsLearned:
+#    for l in learners:
+#        if l.value:
+#            return False
+#    return True
 
 
 # Only a value that has been proposed may be chosen
@@ -60,22 +53,6 @@ def chosen(acceptors):
     return None
 
 
-def record_proposed_value(v, proposed_values):
-    """Record the proposed value in the set of proposed values
-
-    This is only needed so tha twe can check the OnlyProposedValueMayBeChosen invariant
-    """
-    proposed_values.add(v)
-
-def record_chosen_value(acceptors, chosens):
-    """If there is a chosen value, record it in the set of chosen values
-
-    This is only needed so that we can check the SingleValueChosen invariant
-    """
-    c = chosen(acceptors)
-    if c != None:
-        chosens.add(c)
-
 
 role Proposer:
     action Init:
@@ -102,9 +79,16 @@ role Proposer:
         if self.proposal == None:
             self.proposal = record(n=self.n, v=self.__id__)
 
-        record_proposed_value(self.proposal.v, proposed_values)
+        self.record_proposed_value(self.proposal.v)
         for a in acceptors:
             m = a.Issue(self.proposal)
+
+    func record_proposed_value(v):
+        """Record the proposed value in the set of proposed values
+
+        This is only needed so that we can check the OnlyProposedValueMayBeChosen invariant
+        """
+        proposed_values.add(v)
 
 role Acceptor:
     action Init:
@@ -118,13 +102,22 @@ role Acceptor:
             p.Promise(n, self.__id__, self.accepted_proposal)
 
     func Issue(proposal):
-        if proposal.n > self.max_n:
+        if proposal.n >= self.max_n:
             atomic:
                 self.accepted_proposal = proposal
                 # Keep track of the values that have been chosen
-                record_chosen_value(acceptors, chosens)
+                self.record_chosen_value()
                 for l in learners:
                     l.Announce(self.__id__, proposal)
+
+    func record_chosen_value():
+        """If there is a chosen value, record it in the set of chosen values
+
+        This is only needed so that we can check the SingleValueChosen invariant
+        """
+        c = chosen(acceptors)
+        if c != None:
+            chosens.add(c)
 
 role Learner:
     action Init:
