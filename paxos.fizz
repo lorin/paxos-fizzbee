@@ -105,15 +105,21 @@ role Acceptor:
                 # Keep track of the values that have been chosen
                 record_chosen_value()
                 for l in learners:
-                    l.Announce(proposal)
-
+                    l.Announce(self.__id__, proposal)
 
 role Learner:
     action Init:
         self.value = None
         self.proposals = {}
+        self.seen = set()
 
-    func Announce(proposal):
+    # receive an announcement from an acceptor
+    func Announce(aid, proposal):
+        # Process an announcement only once per (aid, proposal) tuple
+        if (aid, proposal) in self.seen:
+            return
+        self.seen.add((aid, proposal))
+
         self.proposals.setdefault(proposal, 0)
         self.proposals[proposal] += 1
         if self.proposals[proposal] > NUM_ACCEPTORS // 2:
