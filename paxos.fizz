@@ -4,12 +4,15 @@ NUM_PROPOSERS = 1
 NUM_ACCEPTORS = 3
 NUM_LEARNERS = 1
 
+always assertion ProposalNeverGetsChosen:
+    return not chosen(acceptors)
+
 # This should be violated!
-always assertion ProposalNeverGetsAccepted:
-    for a in acceptors:
-        if a.accepted_proposal:
-            return False
-    return True
+#always assertion ProposalNeverGetsAccepted:
+#    for a in acceptors:
+#        if a.accepted_proposal:
+#            return False
+#    return True
 
 # Value never gets learned
 # We hope this fails!
