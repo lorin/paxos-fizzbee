@@ -38,10 +38,10 @@ role Proposer:
     # request with number n to a majority of acceptors.
     action Phase1:
         unsent = genericset(acceptors)
-        while len(unsent) > NUM_ACCEPTORS // 2:
+        while is_majority(len(unsent)):
             a = any unsent
             response = a.prepare(self.n)
-            (promise, proposal) = response
+            (promise, proposal, x, y) = response
             atomic:
                 if promise:
                     self.prepared.add(a)
@@ -79,8 +79,7 @@ role Acceptor:
     func prepare(n):
         if n > self.n:
             self.n = n
-            self.x = n
-            return (True, self.highest_accepted)
+            return (True, self.highest_accepted, n, self.n)
         else:
             # cannot make the promise
             return (False, None)
