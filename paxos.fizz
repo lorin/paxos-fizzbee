@@ -1,8 +1,24 @@
-# Based on Paxos Made Simple
+# Based on Lamport's "Paxos Made Simple" paper
 
+#
+# Constants
+#
 NUM_PROPOSERS = 2
 NUM_ACCEPTORS = 3
 NUM_LEARNERS = 1
+
+#
+# Invariants
+#
+# Only a value that has been proposed may be chosen
+always assertion OnlyProposedValueMayBeChosen:
+    proposed_values = set([p.v for p in proposed])
+    return chosen.issubset(proposed_values)
+
+# Only a single value is chosen
+always assertion SingleValueChosen:
+    return len(chosen)<=1
+
 
 role Proposer:
     action Init:
@@ -98,8 +114,6 @@ role Learner:
 
 
 action Init:
-    chosen = genericset()
-
     proposers = []
     acceptors = []
     learners = []
@@ -109,3 +123,13 @@ action Init:
         acceptors.append(Acceptor())
     for i in range(NUM_LEARNERS):
         learners.append(Learner())
+
+    #
+    # History variables, used only for checking invariants
+    #
+
+    # chosen contains role ids, should be hashable
+    chosen = set()
+
+    # proposed contains mutable records, not hashable
+    proposed = genericset()
