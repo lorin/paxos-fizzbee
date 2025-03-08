@@ -5,7 +5,7 @@
 #
 NUM_PROPOSERS = 2
 NUM_ACCEPTORS = 3
-NUM_LEARNERS = 0
+NUM_LEARNERS = 1
 
 def is_majority(c):
     return c > NUM_ACCEPTORS // 2
@@ -91,17 +91,21 @@ role Acceptor:
         if self.n > proposal.n:
             return
 
-        self.accepted.add(proposal)
-        self.update_highest_accepted(proposal)
-        self.record_chosen_values()
+        atomic:
+            self.accepted.add(proposal)
+            self.update_highest_accepted(proposal)
+            self.record_history_variables(proposal)
+
         self.notify_learners(proposal)
 
     atomic func update_highest_accepted(proposal):
         if self.highest_accepted == None or self.highest_accepted.n < proposal.n:
             self.highest_accepted = proposal
 
-    # record which values have been chosen
-    atomic func record_chosen_values():
+    # record proposals and chosen values
+    atomic func record_history_variables(proposal):
+        proposed.add(proposal)
+
         # tally up the accepted proposals
         tally = genericmap()
         for a in acceptors:
