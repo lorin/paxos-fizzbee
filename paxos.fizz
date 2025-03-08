@@ -1,3 +1,5 @@
+# Based on Paxos Made Simple
+
 NUM_PROPOSERS = 2
 NUM_ACCEPTORS = 3
 NUM_LEARNERS = 1
@@ -5,29 +7,37 @@ NUM_LEARNERS = 1
 role Proposer:
     action Init:
         self.proposal = record(n=-1, v=self.__id__)
-        self.responses = 0
+        self.prepared = genericset()
 
+    # A proposer selects a proposal number n and sends a prepare
+    # request with number n to a majority of acceptors.
     action Phase1:
-        # Send to a majority of acceptors
         unsent = genericset(acceptors)
         while len(unsent) > NUM_ACCEPTORS // 2:
             a = any unsent
             response = a.prepare(self.n)
             (promise, proposal) = response
             if promise:
-                self.responses += 1
+                self.prepared.add(a)
             if proposal and proposal.n > self.proposal.n:
                 self.proposal = proposal
             unsent.discard(a)
 
+    # If the proposer receives a response to its prepare requests
+    # (numbered n) from a majority of acceptors, then it sends an accept
+    # request to each of those acceptors for a proposal numbered n with a
+    # value v , where v is the value of the highest-numbered proposal among
+    # the responses, or is any value if the responses reported no proposals.
     action Phase2:
-        require self.responses > NUM_ACCEPTORS // 2
-
+        require len(self.prepared) > NUM_ACCEPTORS // 2
+        self.proposal.n = self.n
+        for acc in self.prepared:
+            acc.accept(self.proposal)
 
 role Acceptor:
     action Init:
         # accepted proposals
-        self.accepted = []
+        self.accepted = genericset()
 
         # The proposal accepted so far with the highest number
         self.highest_accepted = None
@@ -38,24 +48,49 @@ role Acceptor:
     # If an acceptor receives a prepare request with number n greater
     # than that of any prepare request to which it has already responded,
     # then it responds to the request with a promise not to accept any more
-    # proposals numbered less than n and with the highest-numbered pro-
-    # posal (if any) that it has accepted.
+    # proposals numbered less than n and with the highest-numbered proposal
+    # (if any) that it has accepted.
     func prepare(n):
-        if not self.highest_accepted:
-            return (True, None)
-        elif self.high_accepted.n < n:
+        if n > self.n:
+            self.n = n
             return (True, self.highest_accepted)
         else:
             # cannot make the promise
             return (False, None)
 
 
+    # If an acceptor receives an accept request for a proposal numbered n,
+    # it accepts the proposal unless it has already responded to a prepare
+    # request having a number greater than n.
+    func accept(proposal):
+        if self.n > proposal.n:
+            return
+
+        self.accepted.add(proposal)
+        self.update_highest_accepted(proposal)
+        self.record_chosen_values()
+
+    atomic func update_highest_accepted(proposal):
+        if self.highest_accepted == None or self.highest_accepted.n < proposal.n:
+            self.highest_accepted = proposal
 
 
 
-    atomic func record_chosen_value():
-        """Check if a value has been chosen, and record if so"""
-        pass
+    # record which values have been chosen
+    atomic func record_chosen_values():
+        # tally up the accepted proposals
+        tally = genericmap()
+        for a in acceptors:
+            for proposal in a.accepted:
+                tally.setdefault(proposal, 0)
+                tally[proposal] += 1
+
+        # check which proposals have a majority
+        for item in tally.items():
+            count = item[1]
+            if count > NUM_ACCEPTORS // 2:
+                proposal = item[0]
+                chosen.add(proposal.v)
 
 role Learner:
     action Init:
