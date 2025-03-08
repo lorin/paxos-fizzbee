@@ -5,7 +5,10 @@
 #
 NUM_PROPOSERS = 2
 NUM_ACCEPTORS = 3
-NUM_LEARNERS = 1
+NUM_LEARNERS = 0
+
+def is_majority(c):
+    return c > NUM_ACCEPTORS // 2
 
 #
 # Invariants
@@ -19,6 +22,12 @@ always assertion OnlyProposedValueMayBeChosen:
 always assertion SingleValueChosen:
     return len(chosen)<=1
 
+# A process never learns that a value has been chosen unless it actually has been
+always assertion LearnedValueChosen:
+    for l in learners:
+        if l.value != None and l.value not in chosen:
+            return False
+    return True
 
 role Proposer:
     action Init:
@@ -45,7 +54,7 @@ role Proposer:
     # value v , where v is the value of the highest-numbered proposal among
     # the responses, or is any value if the responses reported no proposals.
     action Phase2:
-        require len(self.prepared) > NUM_ACCEPTORS // 2
+        require is_majority(len(self.prepared))
         self.proposal.n = self.n
         for acc in self.prepared:
             acc.accept(self.proposal)
@@ -85,12 +94,11 @@ role Acceptor:
         self.accepted.add(proposal)
         self.update_highest_accepted(proposal)
         self.record_chosen_values()
+        self.notify_learners(proposal)
 
     atomic func update_highest_accepted(proposal):
         if self.highest_accepted == None or self.highest_accepted.n < proposal.n:
             self.highest_accepted = proposal
-
-
 
     # record which values have been chosen
     atomic func record_chosen_values():
@@ -104,14 +112,34 @@ role Acceptor:
         # check which proposals have a majority
         for item in tally.items():
             count = item[1]
-            if count > NUM_ACCEPTORS // 2:
+            if is_majority(count):
                 proposal = item[0]
                 chosen.add(proposal.v)
 
+    # The obvious algorithm is to have each acceptor, whenever it accepts a proposal,
+    # respond to all learners, sending them the proposal.
+    func notify_learners(proposal):
+        for l in learners:
+            l.announce(self.__id__, proposal)
+
+
 role Learner:
     action Init:
-        pass
+        self.value = None
+        self.proposals = genericmap()
+        self.seen = genericset()
 
+    # receive an announcemnt from an acceptor of a proposal
+    atomic func announce(aid, proposal):
+        # Process an announcement only once per (aid, proposal) tuple
+        if (aid, proposal) in self.seen:
+            return
+        self.seen.add((aid, proposal))
+
+        self.proposals.setdefault(proposal, 0)
+        self.proposals[proposal] += 1
+        if is_majority(self.proposals[proposal]):
+            self.value = proposal.v
 
 action Init:
     proposers = []
@@ -128,7 +156,7 @@ action Init:
     # History variables, used only for checking invariants
     #
 
-    # chosen contains role ids, should be hashable
+    # chosen contains role ids, hashable
     chosen = set()
 
     # proposed contains mutable records, not hashable
