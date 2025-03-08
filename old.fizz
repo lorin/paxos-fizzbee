@@ -1,0 +1,155 @@
+# Paxos
+# Based on [Paxos Made Simple](https://lamport.azurewebsites.net/pubs/paxos-simple.pdf)
+NUM_PROPOSERS = 2
+NUM_ACCEPTORS = 3
+NUM_LEARNERS = 1
+
+# Value never gets learned
+# We hope this fails!
+always assertion ValueNeverGetsLearned:
+    for l in learners:
+        if l.value:
+            return False
+    return True
+
+
+# Only a value that has been proposed may be chosen
+always assertion OnlyProposedValueMayBeChosen:
+    c = chosen(acceptors)
+    if c:
+        return c in proposed_values
+    else:
+        return True
+
+# Only a single value is chosen
+always assertion SingleValueChosen:
+    if chosen(acceptors):
+        return len(chosens) == 1
+    else:
+        return True
+
+# A process never learns that a value has been chosen unless it actually has been
+always assertion LearnedValueChosen:
+    for l in learners:
+        if l.value != None and l.value not in chosens:
+            return False
+    return True
+
+def chosen(acceptors):
+    "The chosen value is the one that has been accepted by a majority of acceptors"
+    vals = {}
+    for a in acceptors:
+        if a.accepted_proposal:
+            v = a.accepted_proposal.v
+            vals.setdefault(v, 0)
+            vals[v] += 1
+    if len(vals)>0:
+        val = max(vals, key=vals.get)
+        if vals[val] > NUM_ACCEPTORS // 2:
+            return val
+    return None
+
+
+role Proposer:
+    action Init:
+        self.acc = set()
+        self.proposal = None
+
+    action Prepare:
+        "Prepare the acceptors for a proposal"
+        for a in acceptors:
+            m = a.Prepare(self.__id__, self.n)
+
+    func Promise(n, aid, proposal):
+        "Receive a promise from the acceptors in response to the Prepare"
+
+        # keep track of how many acceptors have issued promises
+        if n == self.n:
+            self.acc.add(aid)
+
+        # If the acceptor returned a proposal with an n less than ours, set that as our proposal
+        if proposal != None and (self.proposal == None or self.proposal.n < proposal.n):
+            self.proposal = proposal
+
+    # Issue the proposal to the acceptors
+    action Issue:
+        require len(self.acc) > NUM_ACCEPTORS // 2
+        if self.proposal == None:
+            self.proposal = record(n=self.n, v=self.__id__)
+        self.record_proposed_value(self.proposal.v)
+        for a in acceptors:
+            m = a.Issue(self.proposal)
+
+    atomic func record_proposed_value(v):
+        """Record the proposed value in the set of proposed values
+
+        This is only needed so that we can check the OnlyProposedValueMayBeChosen invariant
+        """
+        proposed_values.add(v)
+
+role Acceptor:
+    action Init:
+        self.accepted_proposal = None
+        self.max_n = -1  # largest n seen in a Prepare request
+
+    func Prepare(pid, n):
+        if self.accepted_proposal == None or self.accepted_proposal.n < n:
+            if n > self.max_n:
+                self.max_n = n
+            p = self.get_proposer(pid)
+            p.Promise(n, self.__id__, self.accepted_proposal)
+
+    atomic func get_proposer(pid):
+        return [p for p in proposers if p.__id__ == pid][0]
+
+    func Issue(proposal):
+        if proposal.n >= self.max_n:
+            atomic:
+                self.accepted_proposal = proposal
+                # Keep track of the values that have been chosen
+                self.record_chosen_value()
+                for l in learners:
+                    l.Announce(self.__id__, proposal)
+
+    atomic func record_chosen_value():
+        """If there is a chosen value, record it in the set of chosen values
+
+        This is only needed so that we can check the SingleValueChosen invariant
+        """
+        c = chosen(acceptors)
+        if c != None:
+            chosens.add(c)
+
+role Learner:
+    action Init:
+        self.value = None
+        self.proposals = genericmap()
+        self.seen = genericset()
+
+    # receive an announcement from an acceptor
+    func Announce(aid, proposal):
+        # Process an announcement only once per (aid, proposal) tuple
+        if (aid, proposal) in self.seen:
+            return
+        self.seen.add((aid, proposal))
+
+        self.proposals.setdefault(proposal, 0)
+        self.proposals[proposal] += 1
+        if self.proposals[proposal] > NUM_ACCEPTORS // 2:
+            self.value = proposal.v
+
+
+action Init:
+    proposed_values = set()
+    chosens = set()
+
+    proposers = []
+    acceptors = []
+    learners = []
+    for i in range(NUM_PROPOSERS):
+        proposers.append(Proposer(n=i))
+    for i in range(NUM_ACCEPTORS):
+        acceptors.append(Acceptor())
+    for i in range(NUM_LEARNERS):
+        learners.append(Learner())
+
