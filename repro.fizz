@@ -1,0 +1,25 @@
+always assertion SuccessSetsN:
+    return not done or server.n == 0
+
+role Client:
+    action Init:
+        pass
+
+    action Call:
+        success = server.call()
+        if success:
+            done = True
+
+role Server:
+    action Init:
+        self.n = -1
+
+    func call():
+        require not done
+        self.n = 0
+        return True
+
+action Init:
+    done = False
+    server = Server()
+    client = Client()

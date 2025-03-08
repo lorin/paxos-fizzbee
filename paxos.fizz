@@ -4,8 +4,8 @@
 # Constants
 #
 NUM_PROPOSERS = 2
-NUM_ACCEPTORS = 3
-NUM_LEARNERS = 1
+NUM_ACCEPTORS = 1
+NUM_LEARNERS = 0
 
 def is_majority(c):
     return c > NUM_ACCEPTORS // 2
@@ -42,10 +42,11 @@ role Proposer:
             a = any unsent
             response = a.prepare(self.n)
             (promise, proposal) = response
-            if promise:
-                self.prepared.add(a)
-            if proposal and proposal.n > self.proposal.n:
-                self.proposal = proposal
+            atomic:
+                if promise:
+                    self.prepared.add(a)
+                if proposal and (self.proposal == None or proposal.n > self.proposal.n):
+                    self.proposal = proposal
             unsent.discard(a)
 
     # If the proposer receives a response to its prepare requests
@@ -78,6 +79,7 @@ role Acceptor:
     func prepare(n):
         if n > self.n:
             self.n = n
+            self.x = n
             return (True, self.highest_accepted)
         else:
             # cannot make the promise
