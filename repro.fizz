@@ -22,18 +22,17 @@ role Proposer:
     # A proposer selects a proposal number n and sends a prepare
     # request with number n to a majority of acceptors.
     action Phase1:
-        unsent = genericset(range(NUM_ACCEPTORS))
+        unsent = genericset(acceptors)
         while is_majority(len(unsent)):
-            acc_id = any unsent
-            a = acceptors[acc_id]
+            a = any unsent
             response = a.prepare(self.n)
-            (promise, proposal) = response
+            (promise, proposal, x, y) = response
             atomic:
                 if promise:
                     self.prepared.add(a)
                 if proposal and (self.proposal == None or proposal.n > self.proposal.n):
                     self.proposal = proposal
-            unsent.discard(acc_id)
+            unsent.discard(a)
 
     # If the proposer receives a response to its prepare requests
     # (numbered n) from a majority of acceptors, then it sends an accept
@@ -65,7 +64,7 @@ role Acceptor:
     func prepare(n):
         if n > self.n:
             self.n = n
-            return (True, self.highest_accepted)
+            return (True, self.highest_accepted, n, self.n)
         else:
             # cannot make the promise
             return (False, None)
