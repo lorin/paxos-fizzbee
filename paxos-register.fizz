@@ -1,0 +1,162 @@
+# Based on Lamport's "Paxos Made Simple" paper
+
+#
+# Constants
+#
+NUM_WRITERS = 2
+NUM_STORAGE_NODES = 3
+NUM_READERS = 0
+
+def is_majority(c):
+    return c > NUM_STORAGE_NODES // 2
+
+#
+# Invariants
+#
+
+# The written values must have come from writes
+always assertion WrittenValueMustHaveBeenIssuedByWriter:
+    return written_values.issubset([w.v for w in writes])
+
+# Two nodes never have different values written after conensus was reached
+# We use this assertion to generate an interesting trace
+always assertion NoTwoNodesHaveDifferentWrittenValues:
+    # we only care about cases where consensus was reached
+    if len(written_values)==0:
+        return True
+    s = set([max(node.local_writes, key=lambda w: w.ts).v for node in storage_nodes if node.local_writes])
+    return len(s)<=1
+
+
+# Only a single value is written
+always assertion SingleValueWritten:
+    return len(written_values)<=1
+
+# A reader never reads a value unless it was written
+always assertion ReadValueWasWritten:
+    return all([(r.value in written_values) for r in readers
+                                            if r.value != None])
+
+role Writer:
+    action Init:
+        self.v = self.__id__
+        self.latest_write_seen = -1
+        self.quorum = genericset()
+
+    action Phase1:
+        unsent = genericset(storage_nodes)
+        while is_majority(len(unsent)):
+            node = any unsent
+            response = node.read_and_advance_clock(self.clock)
+            (clock_advanced, previous_write) = response
+            unsent.discard(node)
+
+            require clock_advanced
+            atomic:
+                self.quorum.add(node)
+                if previous_write and previous_write.ts > self.latest_write_seen:
+                    self.latest_write_seen = previous_write.ts
+                    self.v = previous_write.v
+
+    action Phase2:
+        require is_majority(len(self.quorum))
+        for node in self.quorum:
+            node.write(self.clock, self.v)
+
+role StorageNode:
+    action Init:
+        # set of writes that have previously occurred on this node
+        self.local_writes = genericset()
+
+        # will not accept write requests that occur at times before our clock
+        self.clock = -1
+
+    # read the value written on a storage node and advance its clock
+    # returns a tuple:
+    #  - True if the node's clock now matches ours (i.e., the storage node's clock was previously earlier or equal to ours)
+    #  - The value previously written to the storage node
+    func read_and_advance_clock(clock):
+        if clock > self.clock:
+            self.clock = clock
+
+        latest_write = None
+
+        if self.local_writes:
+            latest_write = max(self.local_writes, key=lambda w: w.ts)
+
+        return (self.clock == clock, latest_write)
+
+
+    # Attempt a write on a storage node
+    atomic func write(ts, v):
+        # request's timestamp must be later than our clock
+        require ts >= self.clock
+
+        w = record(ts=ts, v=v)
+        self.local_writes.add(w)
+        self.record_history_variables(w)
+
+        self.notify_readers(w)
+
+    # record requests and written values
+    atomic func record_history_variables(request):
+        writes.add(request)
+
+        # tally up the accepted requests
+        tallies = genericmap()
+        for node in storage_nodes:
+            for w in node.local_writes:
+                tallies.setdefault(w, 0)
+                tallies[w] += 1
+
+        # check which requests have a majority
+        for item in tallies.items():
+            count = item[1]
+            if is_majority(count):
+                w = item[0]
+                written_values.add(w.v)
+
+    # The obvious algorithm is to have each acceptor, whenever it accepts a request,
+    # respond to all readers, sending them the request.
+    func notify_readers(write):
+        for r in readers:
+            r.publish(self.__id__, write)
+
+
+role Reader:
+    action Init:
+        self.value = None
+        self.tallies = genericmap()
+        self.seen = genericset()
+
+    # receive a publish event from a storage node
+    atomic func publish(node_id, write):
+        # Process a publish event only once per (node_id, write) tuple
+        require (node_id, write) not in self.seen
+        self.seen.add((node_id, write))
+
+        self.tallies.setdefault(write, 0)
+        self.tallies[write] += 1
+        if is_majority(self.tallies[write]):
+            self.value = write.v
+
+action Init:
+    writers = []
+    storage_nodes = []
+    readers = []
+    for i in range(NUM_WRITERS):
+        writers.append(Writer(clock=i))
+    for i in range(NUM_STORAGE_NODES):
+        storage_nodes.append(StorageNode())
+    for i in range(NUM_READERS):
+        readers.append(Reader())
+
+    #
+    # History variables, used only for checking invariants
+    #
+
+    # written contains role ids, hashable
+    written_values = set()
+
+    # proposed contains mutable records, not hashable
+    writes = genericset()

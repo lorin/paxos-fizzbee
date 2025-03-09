@@ -1,2 +1,4 @@
+deadlock_detection: false
 options:
     crash_on_yield: false
+
